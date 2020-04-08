@@ -1,6 +1,18 @@
 const discord = require("discord.js");
 const {transports, createLogger, format} = require("winston");
 const config = require("./config.json");
+const { Pool } = require('pg');
+const yn = require("yn");
+const moment = require("moment-timezone");
+
+require("dotenv").config();
+
+const db = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: yn(process.env.DATABASE_SSL) ? {
+    rejectUnauthorized: false
+  } : false
+})
 
 const logger = createLogger({
   format: format.combine(
@@ -22,7 +34,7 @@ client.once('ready', () => {
   logger.info('Logged in as: ' + client.user);
 });
 
-client.on('message', (message) => {
+client.on('message', async (message) => {
   if (!message.content.startsWith(config.prefix) || message.author.bot) return;
 
   logger.debug("Received message: " + message.content);
@@ -32,6 +44,14 @@ client.on('message', (message) => {
   const cmd = args.shift().toLowerCase();
 
   switch(cmd) {
+    case "timezone":
+      if (args.length !== 1) throw new Error("Wrong arguments");
+
+      db.query("INSERT INTO settings(key, value) VALUES ('timezone', $1) ON CONFLICT (key) DO UPDATE SET value = $1;", args, (err) => {
+        if (err) throw err;
+      });
+      
+      break;
     case 'training':
 
       const linkIndex = args.findIndex((item) => item === "link");
@@ -51,34 +71,48 @@ client.on('message', (message) => {
       logger.debug("Is time with date: " + hasDate);
 
       var trainingDate;
-      var milisToTraining
+      var milisToTraining;
+      var timezone = "UTC";
+      
+      await db.query("SELECT value FROM settings WHERE key = 'timezone';")
+        .then(res => {
+          if (res.rows.length !== 0 && res.rows[0].value !== null) 
+            timezone = res.rows[0].value;
+        })
+        .catch(err => { throw err; });
+
+      logger.debug("Timezone: " + timezone);
 
       if (hasDate) {
-        trainingDate = new Date(trainingTime);
+        trainingDate = moment.tz(trainingTime, timezone);
 
-        const now = new Date();
+        const now = moment();
 
-        milisToTraining = trainingDate - now;
+        milisToTraining = trainingDate.diff(now);
+
+        logger.debug("Milis to training: " + milisToTraining);
 
         if (milisToTraining < 0) {
           logger.debug("Date is in the past, send message")
           break;
         }
       } else {
-        trainingDate = new Date(new Date(Date.now()).toDateString().split(',')[0] + " " + trainingTime)
+        trainingDate = moment.tz(moment().format("DD/MM/YYYY") + " " + trainingTime, "DD/MM/YYYY HH:mm:ss", timezone);
 
-        const now = new Date();
+        const now = moment();
 
         if (trainingDate < now) {
-          trainingDate = new Date(trainingDate.getTime() + 24*60*60*1000); // it's after this hour today, try tomorrow.
+          trainingDate = trainingDate.date(trainingDate.date() + 1); // it's after this hour today, try tomorrow.
         }
 
-        milisToTraining = trainingDate - now;
+        milisToTraining = trainingDate.diff(now);
       }
 
-      logger.debug("Training date: " + trainingDate);
+      logger.debug("Training date: " + trainingDate.toString());
 
-      message.channel.send("Training set for " + trainingDate);
+      logger.debug("Milis to training: " + milisToTraining);
+
+      message.channel.send("Training set for " + trainingDate.toString());
 
       setTimeout(async function() {
         logger.debug("Notifying about training");
