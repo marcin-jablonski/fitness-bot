@@ -134,6 +134,8 @@ client.on('message', async (message) => {
         milisToTraining = trainingDate.diff(now);
       }
 
+      if (!trainingDate.isValid()) throw new Error("Invalid date provided")
+
       logger.debug("Training date: " + trainingDate.toString());
 
       logger.debug("Milis to training: " + milisToTraining);
