@@ -164,9 +164,28 @@ client.login(process.env.BOT_TOKEN);
 const nextFullHour = moment().startOf("hour").hour(moment().startOf("hour").hour() + 1);
 
 setTimeout(() => {
+  db.query("SELECT * FROM trainings WHERE completed = FALSE")
+    .then(res => {
+      logger.debug("Will queue following trainings now:")
+      logger.debug(res.rows);
+      res.rows
+        .filter(
+          (item) => (item.date <= moment().startOf("hour").hour(moment().startOf("hour").hour() + 1)) && 
+          (queuedTrainings.findIndex((qTrainingId) => qTrainingId === item.id) === -1)
+        )
+        .forEach(training => {
+          logger.debug("Queueing training: " + JSON.stringify(training));
+          queuedTrainings.push(training.id);
+          const milisToTraining = moment(training.date).diff(moment());
+          setTimeout(notifyAboutTraining.bind(null, training.id), milisToTraining);
+        })
+    })
+  
   setInterval(() => {
     db.query("SELECT * FROM trainings WHERE completed = FALSE")
       .then(res => {
+        logger.debug("Will queue following trainings now:")
+        logger.debug(res.rows);
         res.rows
           .filter(
             (item) => (item.date <= moment().startOf("hour").hour(moment().startOf("hour").hour() + 1)) && 
@@ -180,6 +199,7 @@ setTimeout(() => {
           })
       })
   }, 1000 * 60 * 60)
+  logger.debug("Will queue next batch of trainings at: " + nextFullHour.toString() + ", milis left: " + nextFullHour.diff(moment()));
 }, nextFullHour.diff(moment()))
 
 db.query("SELECT * FROM trainings WHERE completed = FALSE")
