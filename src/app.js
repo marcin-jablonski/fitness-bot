@@ -30,27 +30,46 @@ logger.level = 'debug';
 
 var queuedTrainings = [];
 
-async function notifyAboutTraining(trainingId) {
+function notifyAboutTraining(trainingId) {
   logger.debug("Notifying about training");
 
-  db.query("SELECT * FROM trainings WHERE id = $1", [trainingId])
-    .then(res => {
-      client.channels
-        .fetch(res.rows[0].channel)
-        .then(channel => {
-          channel.send("Hey, training time! @everyone");
+  db.query("SELECT * FROM trainings_users WHERE training_id = $1", [trainingId])
+    .then(mentionedUsers => {
 
-          logger.debug("Training link: " + res.rows[0].link);
-    
-          if (res.rows[0].link !== null && res.rows[0].link !== undefined) {
-            channel.send(res.rows[0].link);
-          }
+      var mentionsPromise;
+
+      if (mentionedUsers.rows.length === 0 || mentionedUsers.rows[0].user === "everyone") {
+        mentionsPromise = Promise.resolve("@everyone");
+      } else {
+        mentionsPromise = Promise.all(mentionedUsers.rows.map(row => {
+          const userId = row.user;
+          return client.users.fetch(userId);
+        })).then(messageMentions => Promise.resolve(messageMentions.join(" ")));
+      }
+
+      mentionsPromise.then(messageMentions => {
+        db.query("SELECT * FROM trainings WHERE id = $1", [trainingId])
+          .then(res => {
+
+            client.channels
+              .fetch(res.rows[0].channel)
+              .then(channel => {          
+                  
+                channel.send("Hey, training time! " + messageMentions);
+
+                logger.debug("Training link: " + res.rows[0].link);
           
-          _.remove(queuedTrainings, (item) => item === trainingId);
-          db.query("UPDATE trainings SET completed = TRUE WHERE id = $1", [trainingId]).catch(err => { throw err; });
-        });      
+                if (res.rows[0].link !== null && res.rows[0].link !== undefined) {
+                  channel.send(res.rows[0].link);
+                }
+                
+                _.remove(queuedTrainings, (item) => item === trainingId);
+                db.query("UPDATE trainings SET completed = TRUE WHERE id = $1", [trainingId]).catch(err => { throw err; });
+              });      
+          })
+          .catch(err => { throw err; });
+      })
     })
-    .catch(err => { throw err; });
 }
 
 const client = new discord.Client();
@@ -177,27 +196,10 @@ client.on('message', async (message) => {
   }
 });
 
-client.login(process.env.BOT_TOKEN);
+client.login(process.env.BOT_TOKEN).then(token => {
+  const nextFullHour = moment().startOf("hour").hour(moment().startOf("hour").hour() + 1);
 
-const nextFullHour = moment().startOf("hour").hour(moment().startOf("hour").hour() + 1);
-
-setTimeout(() => {
-  db.query("SELECT * FROM trainings WHERE completed = FALSE")
-    .then(res => {
-      res.rows
-        .filter(
-          (item) => (item.date <= moment().startOf("hour").hour(moment().startOf("hour").hour() + 1)) && 
-          (queuedTrainings.findIndex((qTrainingId) => qTrainingId === item.id) === -1)
-        )
-        .forEach(training => {
-          logger.debug("Queueing training: " + JSON.stringify(training));
-          queuedTrainings.push(training.id);
-          const milisToTraining = moment(training.date).diff(moment());
-          setTimeout(notifyAboutTraining.bind(null, training.id), milisToTraining);
-        })
-    })
-  
-  setInterval(() => {
+  setTimeout(() => {
     db.query("SELECT * FROM trainings WHERE completed = FALSE")
       .then(res => {
         res.rows
@@ -212,18 +214,36 @@ setTimeout(() => {
             setTimeout(notifyAboutTraining.bind(null, training.id), milisToTraining);
           })
       })
-  }, 1000 * 60 * 60)
-  logger.debug("Will queue next batch of trainings at: " + nextFullHour.toString() + ", milis left: " + nextFullHour.diff(moment()));
-}, nextFullHour.diff(moment()))
+    
+    setInterval(() => {
+      db.query("SELECT * FROM trainings WHERE completed = FALSE")
+        .then(res => {
+          res.rows
+            .filter(
+              (item) => (item.date <= moment().startOf("hour").hour(moment().startOf("hour").hour() + 1)) && 
+              (queuedTrainings.findIndex((qTrainingId) => qTrainingId === item.id) === -1)
+            )
+            .forEach(training => {
+              logger.debug("Queueing training: " + JSON.stringify(training));
+              queuedTrainings.push(training.id);
+              const milisToTraining = moment(training.date).diff(moment());
+              setTimeout(notifyAboutTraining.bind(null, training.id), milisToTraining);
+            })
+        })
+    }, 1000 * 60 * 60)
+    logger.debug("Will queue next batch of trainings at: " + nextFullHour.toString() + ", milis left: " + nextFullHour.diff(moment()));
+  }, nextFullHour.diff(moment()))
 
-db.query("SELECT * FROM trainings WHERE completed = FALSE")
-  .then(res => {
-    res.rows
-      .filter((item) => item.date <= nextFullHour)
-      .forEach(training => {
-        logger.debug("Queueing training: " + JSON.stringify(training));
-        queuedTrainings.push(training.id);
-        const milisToTraining = moment(training.date).diff(moment());
-        setTimeout(notifyAboutTraining.bind(null, training.id), milisToTraining);
-      })
-  })
+  db.query("SELECT * FROM trainings WHERE completed = FALSE")
+    .then(res => {
+      res.rows
+        .filter((item) => item.date <= nextFullHour)
+        .forEach(training => {
+          logger.debug("Queueing training: " + JSON.stringify(training));
+          queuedTrainings.push(training.id);
+          const milisToTraining = moment(training.date).diff(moment());
+          setTimeout(notifyAboutTraining.bind(null, training.id), milisToTraining);
+        })
+    })
+})
+
