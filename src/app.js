@@ -64,8 +64,7 @@ client.on('message', async (message) => {
   if (!message.content.startsWith(config.prefix) || message.author.bot) return;
 
   logger.debug("Received message: " + message.content);
-
-  const args = message.content.split(/ +/);
+  const args = message.content.split(/ +/).filter((item) => !(discord.MessageMentions.USERS_PATTERN.test(item) || item === "@everyone"));
   args.shift();
   const cmd = args.shift().toLowerCase();
 
@@ -142,14 +141,31 @@ client.on('message', async (message) => {
 
       message.channel.send("Training set for " + trainingDate.toString());
 
+      const mentions = message.mentions;
+
+      logger.debug("Mentions:")
+      logger.debug("everyone: " + mentions.everyone);
+      logger.debug("users: " + JSON.stringify(mentions.users));
+
       db.query("INSERT INTO trainings(channel, date, link) VALUES ($1, $2, $3) RETURNING *;", [message.channel.id, trainingDate, trainingLink])
         .then(res => {
-          if (trainingDate < moment().startOf("hour").hour(moment().startOf("hour").hour() + 1)) {
-          logger.debug("Training starts within current hour, starting timeout");
 
-          queuedTrainings.push(res.rows[0].id);
-          setTimeout(notifyAboutTraining.bind(null, res.rows[0].id), milisToTraining)
-        }
+          const nextQueryText = "INSERT INTO trainings_users VALUES ($1, $2);";
+
+          if (mentions.everyone) {
+            db.query(nextQueryText, [res.rows[0].id, "everyone"]).catch(err => { throw err; });
+          } else {
+            mentions.users.forEach((user, userId) => {
+              db.query(nextQueryText, [res.rows[0].id, userId]).catch(err => { throw err; });
+            })
+          }
+
+          if (trainingDate < moment().startOf("hour").hour(moment().startOf("hour").hour() + 1)) {
+            logger.debug("Training starts within current hour, starting timeout");
+
+            queuedTrainings.push(res.rows[0].id);
+            setTimeout(notifyAboutTraining.bind(null, res.rows[0].id), milisToTraining)
+          }
         })
         .catch(err => { throw err; });
 
@@ -168,8 +184,6 @@ const nextFullHour = moment().startOf("hour").hour(moment().startOf("hour").hour
 setTimeout(() => {
   db.query("SELECT * FROM trainings WHERE completed = FALSE")
     .then(res => {
-      logger.debug("Will queue following trainings now:")
-      logger.debug(res.rows);
       res.rows
         .filter(
           (item) => (item.date <= moment().startOf("hour").hour(moment().startOf("hour").hour() + 1)) && 
@@ -186,8 +200,6 @@ setTimeout(() => {
   setInterval(() => {
     db.query("SELECT * FROM trainings WHERE completed = FALSE")
       .then(res => {
-        logger.debug("Will queue following trainings now:")
-        logger.debug(res.rows);
         res.rows
           .filter(
             (item) => (item.date <= moment().startOf("hour").hour(moment().startOf("hour").hour() + 1)) && 
