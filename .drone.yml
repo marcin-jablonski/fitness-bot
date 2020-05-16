@@ -1,0 +1,26 @@
+---
+kind: pipeline
+type: docker
+name: fitness
+
+steps:
+  - name: deploy
+    image: docker:latest
+    environment:
+      BOT_TOKEN:
+        from_secret: BOT_TOKEN
+      DATABASE_URL:
+        from_secret: DATABASE_URL
+    volumes:
+      - name: docker_sock
+        path: /var/run/docker.sock
+    commands:
+      - docker build -t fitness .
+      - docker stop fitness || true
+      - docker rm fitness || true
+      - docker run -d --restart always -e BOT_TOKEN=$BOT_TOKEN -e DATABASE_URL=$DATABASE_URL -e DATABASE_SSL=true --name fitness fitness
+
+volumes:
+  - name: docker_sock
+    host:
+      path: /var/run/docker.sock
