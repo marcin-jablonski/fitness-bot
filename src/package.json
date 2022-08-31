@@ -13,7 +13,7 @@
     "discord.js": "^12.1.1",
     "dotenv": "^8.2.0",
     "lodash": "^4.17.19",
-    "moment-timezone": "^0.5.28",
+    "moment-timezone": "^0.5.35",
     "pg": "^8.0.0",
     "winston": "^3.2.1",
     "yn": "^4.0.0"
